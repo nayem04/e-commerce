@@ -1,10 +1,12 @@
 package com.nayem.ecommerce.order;
 
 import com.nayem.ecommerce.customer.CustomerClient;
+import com.nayem.ecommerce.customer.CustomerResponse;
 import com.nayem.ecommerce.exceptions.BusinessException;
 import com.nayem.ecommerce.kafka.CustomerResponseListener;
 import com.nayem.ecommerce.kafka.OrderConfirmation;
 import com.nayem.ecommerce.kafka.OrderProducer;
+import com.nayem.ecommerce.kafka.PurchaseProductsResponseListener;
 import com.nayem.ecommerce.orderline.OrderLineRequest;
 import com.nayem.ecommerce.orderline.OrderLineService;
 import com.nayem.ecommerce.payment.PaymentClient;
@@ -31,6 +33,7 @@ public class OrderService {
     private final OrderLineService orderLineService;
     private final OrderProducer orderProducer;
     private final CustomerResponseListener customerResponseListener;
+    private final PurchaseProductsResponseListener purchaseProductsResponseListener;
 
     @Transactional
     public Integer createOrder(OrderRequest orderRequest) {
@@ -82,56 +85,59 @@ public class OrderService {
 
     @Transactional
     public CompletableFuture<Integer> createOrderEventDriven(OrderRequest orderRequest) {
-        //Finding customer from customer-service
-        var customer = customerClient.findCustomerById(orderRequest.customerId())
-                .orElseThrow(() -> new BusinessException("Cannot create order:: No customer exists with the provided ID"));
-
+        // Step 1: Request customer information asynchronously
         return customerResponseListener.getCustomerInfo(orderRequest.customerId())
-                .thenApply(customerResponse -> {
-                    //Purchase product from product-service
-                    var purchasedProducts = productClient.purchaseProducts(orderRequest.products());
+                .thenCompose(customerResponse -> {
+                    var customer = new CustomerResponse(
+                            customerResponse.id(), customerResponse.firstname(),
+                            customerResponse.lastname(), customerResponse.email()
+                    );
 
-                    //Save order
-                    var order = orderRepository.save(orderMapper.toOrder(orderRequest));
+                    // Step 2: Request product purchase asynchronously
+                    return purchaseProductsResponseListener.getPurchaseProductsInfo(orderRequest.products())
+                            .thenApply(purchaseProductsResponse -> {
+                                // Step 3: Save order
+                                var order = orderRepository.save(orderMapper.toOrder(orderRequest));
 
-                    //Save OrderLine
-                    for (PurchaseRequest purchaseRequest : orderRequest.products()) {
-                        orderLineService.saveOrderLine(
-                                new OrderLineRequest(
-                                        null,
+                                // Step 4: Save OrderLines
+                                for (PurchaseRequest purchaseRequest : orderRequest.products()) {
+                                    orderLineService.saveOrderLine(
+                                            new OrderLineRequest(
+                                                    null, order.getId(),
+                                                    purchaseRequest.productId(),
+                                                    purchaseRequest.quantity()
+                                            )
+                                    );
+                                }
+
+                                // Step 5: Proceed with payment to Payment-service
+                                var paymentRequest = new PaymentRequest(
+                                        orderRequest.amount(),
+                                        orderRequest.paymentMethod(),
                                         order.getId(),
-                                        purchaseRequest.productId(),
-                                        purchaseRequest.quantity()
-                                )
-                        );
-                    }
+                                        order.getReference(),
+                                        customer
+                                );
+                                paymentClient.requestOrderPayment(paymentRequest);
 
-                    //Proceed payment to Payment-service
-                    var paymentRequest = new PaymentRequest(
-                            orderRequest.amount(),
-                            orderRequest.paymentMethod(),
-                            order.getId(),
-                            order.getReference(),
-                            customer
-                    );
-                    paymentClient.requestOrderPayment(paymentRequest);
+                                // Step 6: Send Kafka order confirmation event
+                                orderProducer.sendOrderConfirmation(
+                                        new OrderConfirmation(
+                                                orderRequest.reference(),
+                                                orderRequest.amount(),
+                                                orderRequest.paymentMethod(),
+                                                customer,
+                                                purchaseProductsResponse.purchaseProducts()
+                                        )
+                                );
 
-                    //Sending message to kafka
-                    orderProducer.sendOrderConfirmation(
-                            new OrderConfirmation(
-                                    orderRequest.reference(),
-                                    orderRequest.amount(),
-                                    orderRequest.paymentMethod(),
-                                    customer,
-                                    purchasedProducts
-                            )
-                    );
-
-                    return order.getId();
+                                return order.getId();
+                            });
                 }).exceptionally(exception -> {
-                    throw new BusinessException("Cannot create order:: No customer exists with the provided ID");
+                    throw new BusinessException("Cannot create order: " + exception.getMessage());
                 });
     }
+
 
     public List<OrderResponse> findAllOrders() {
         return this.orderRepository.findAll()

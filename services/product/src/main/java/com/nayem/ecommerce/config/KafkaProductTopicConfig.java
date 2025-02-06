@@ -6,18 +6,11 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.TopicBuilder;
 
 @Configuration
-public class KafkaTopicConfig {
+public class KafkaProductTopicConfig {
     @Bean
-    public NewTopic customerRequestTopic() {
+    public NewTopic purchaseProductsResponseTopic() {
         return TopicBuilder
-                .name("customer-request-topic")
-                .build();
-    }
-
-    @Bean
-    public NewTopic orderTopic() {
-        return TopicBuilder
-                .name("order-topic")
+                .name("purchase-products-response-topic")
                 .build();
     }
 }
