@@ -18,10 +18,11 @@ spring:
         spring.json.type.mapping: >
           customerRequest:com.nayem.ecommerce.kafka.CustomerRequest,
           purchaseProductsRequest:com.nayem.ecommerce.kafka.PurchaseProductsRequest,
-          orderConfirmation:com.nayem.ecommerce.kafka.OrderConfirmation
+          orderConfirmation:com.nayem.ecommerce.kafka.OrderConfirmation,
+          paymentRequest:com.nayem.ecommerce.kafka.PaymentRequest
     consumer:
       bootstrap-servers: localhost:9092
-      group-id: customerResponseGroup,purchaseProductsResponseGroup
+      group-id: customerResponseGroup,purchaseProductsResponseGroup,paymentResponseGroup
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
@@ -29,7 +30,8 @@ spring:
         spring.json.trusted.packages: '*'
         spring.json.type.mapping: >
           customerResponse:com.nayem.ecommerce.kafka.CustomerResponse,
-          purchaseProductsResponse:com.nayem.ecommerce.kafka.PurchaseProductsResponse
+          purchaseProductsResponse:com.nayem.ecommerce.kafka.PurchaseProductsResponse,
+          paymentResponse:com.nayem.ecommerce.kafka.PaymentResponse
 
 server:
   port: 8070

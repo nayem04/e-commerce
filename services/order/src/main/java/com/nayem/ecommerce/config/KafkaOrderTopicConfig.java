@@ -27,4 +27,11 @@ public class KafkaOrderTopicConfig {
                 .name("order-topic")
                 .build();
     }
+
+    @Bean
+    public NewTopic paymentRequestTopic() {
+        return TopicBuilder
+                .name("payment-request-topic")
+                .build();
+    }
 }

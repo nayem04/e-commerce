@@ -3,10 +3,7 @@ package com.nayem.ecommerce.order;
 import com.nayem.ecommerce.customer.CustomerClient;
 import com.nayem.ecommerce.customer.CustomerResponse;
 import com.nayem.ecommerce.exceptions.BusinessException;
-import com.nayem.ecommerce.kafka.CustomerResponseListener;
-import com.nayem.ecommerce.kafka.OrderConfirmation;
-import com.nayem.ecommerce.kafka.OrderProducer;
-import com.nayem.ecommerce.kafka.PurchaseProductsResponseListener;
+import com.nayem.ecommerce.kafka.*;
 import com.nayem.ecommerce.orderline.OrderLineRequest;
 import com.nayem.ecommerce.orderline.OrderLineService;
 import com.nayem.ecommerce.payment.PaymentClient;
@@ -34,6 +31,7 @@ public class OrderService {
     private final OrderProducer orderProducer;
     private final CustomerResponseListener customerResponseListener;
     private final PurchaseProductsResponseListener purchaseProductsResponseListener;
+    private final PaymentResponseListener paymentResponseListener;
 
     @Transactional
     public Integer createOrder(OrderRequest orderRequest) {
@@ -95,7 +93,7 @@ public class OrderService {
 
                     // Step 2: Request product purchase asynchronously
                     return purchaseProductsResponseListener.getPurchaseProductsInfo(orderRequest.products())
-                            .thenApply(purchaseProductsResponse -> {
+                            .thenCompose(purchaseProductsResponse -> {
                                 // Step 3: Save order
                                 var order = orderRepository.save(orderMapper.toOrder(orderRequest));
 
@@ -111,27 +109,25 @@ public class OrderService {
                                 }
 
                                 // Step 5: Proceed with payment to Payment-service
-                                var paymentRequest = new PaymentRequest(
-                                        orderRequest.amount(),
-                                        orderRequest.paymentMethod(),
-                                        order.getId(),
-                                        order.getReference(),
-                                        customer
-                                );
-                                paymentClient.requestOrderPayment(paymentRequest);
+                                var payment = new PaymentRequest(orderRequest.amount(),
+                                        orderRequest.paymentMethod(), order.getId(),
+                                        order.getReference(), customer);
 
-                                // Step 6: Send Kafka order confirmation event
-                                orderProducer.sendOrderConfirmation(
-                                        new OrderConfirmation(
-                                                orderRequest.reference(),
-                                                orderRequest.amount(),
-                                                orderRequest.paymentMethod(),
-                                                customer,
-                                                purchaseProductsResponse.purchaseProducts()
-                                        )
-                                );
+                                return paymentResponseListener.proceedPayment(payment)
+                                        .thenApply(paymentResponse -> {
+                                            // Step 6: Send Kafka order confirmation event
+                                            orderProducer.sendOrderConfirmation(
+                                                    new OrderConfirmation(
+                                                            orderRequest.reference(),
+                                                            orderRequest.amount(),
+                                                            orderRequest.paymentMethod(),
+                                                            customer,
+                                                            purchaseProductsResponse.purchaseProducts()
+                                                    )
+                                            );
 
-                                return order.getId();
+                                            return order.getId();
+                                        });
                             });
                 }).exceptionally(exception -> {
                     throw new BusinessException("Cannot create order: " + exception.getMessage());
